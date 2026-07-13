@@ -23,6 +23,12 @@ def _blank_state(user_id: str, session_id: str) -> SmartStressState:
         "session_id": session_id,
         "stress_history": [],
         "stress_timestamps": [],
+        "physio_features": [],
+        "physio_feature_map": {},
+        "physio_raw_features": [],
+        "physio_baseline_features": [],
+        "physio_attributions": {},
+        "physio_top_drivers": [],
         "conversation_history": [],
         "rag_context": [],
         "use_rag": True,
@@ -37,7 +43,7 @@ def _build_initial_state(req: StartSessionRequest) -> SmartStressState:
     state = _blank_state(req.user.user_id, req.user.session_id)
     state["user_preferences"] = req.user.traits
     if req.initial_sensor_data:
-        payload = dict(req.initial_sensor_data.values)
+        payload = req.initial_sensor_data.to_payload()
         payload["timestamp"] = req.initial_sensor_data.timestamp
         state["raw_sensor_input"] = payload
     return state
@@ -62,6 +68,13 @@ def _state_to_view(state: SmartStressState) -> SmartStressStateView:
         user_id=state.get("user_id", ""),
         session_id=state.get("session_id", ""),
         current_stress_prob=state.get("current_stress_prob"),
+        stress_detected=state.get("stress_detected"),
+        stress_threshold=state.get("stress_threshold"),
+        physio_model_id=state.get("physio_model_id"),
+        physio_input_source=state.get("physio_input_source"),
+        physio_feature_map=dict(state.get("physio_feature_map", {})),
+        physio_attributions=dict(state.get("physio_attributions", {})),
+        physio_top_drivers=list(state.get("physio_top_drivers", [])),
         stress_history=list(state.get("stress_history", [])),
         stress_timestamps=list(state.get("stress_timestamps", [])),
         current_stressor=state.get("current_stressor"),
@@ -125,7 +138,7 @@ def continue_session(
     state = _load_cached_state(handle)
 
     if req.sensor_data:
-        payload = dict(req.sensor_data.values)
+        payload = req.sensor_data.to_payload()
         payload["timestamp"] = req.sensor_data.timestamp
         state["raw_sensor_input"] = payload
 

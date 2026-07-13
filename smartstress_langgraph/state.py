@@ -28,6 +28,16 @@ class SmartStressState(TypedDict, total=False):
     # === PhysioSense (L1) ===
     raw_sensor_input: Optional[Dict[str, Any]]
     current_stress_prob: float
+    stress_detected: bool
+    stress_threshold: float
+    physio_model_id: str
+    physio_input_source: str
+    physio_features: List[float]
+    physio_feature_map: Dict[str, float]
+    physio_raw_features: List[float]
+    physio_baseline_features: List[float]
+    physio_attributions: Dict[str, float]
+    physio_top_drivers: List[Dict[str, Any]]
     stress_history: List[float]
     stress_timestamps: List[str]  # ISO timestamps aligned with stress_history
 
