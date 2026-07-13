@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional, TypedDict
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, TypedDict
 
-from langchain_core.messages import BaseMessage
+if TYPE_CHECKING:
+    from langchain_core.messages import BaseMessage
+else:
+    BaseMessage = Any
 
 
 class ToolCall(TypedDict):
