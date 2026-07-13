@@ -99,10 +99,14 @@ class WesadAttentionPredictor:
     def __init__(
         self,
         *,
-        threshold: float = 0.5,
+        threshold: float | None = None,
         manifest_path: str | Path = DEFAULT_MANIFEST_PATH,
         device: str | torch.device = "cpu",
     ) -> None:
+        if threshold is None:
+            from smartstress_langgraph.config import get_stress_threshold
+
+            threshold = get_stress_threshold()
         if not 0.0 <= threshold <= 1.0:
             raise ValueError("threshold must be between 0 and 1")
 

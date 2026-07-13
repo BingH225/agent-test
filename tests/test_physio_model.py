@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 from smartstress_langgraph.physio import FEATURE_NAMES, WesadAttentionPredictor
 
@@ -29,8 +31,14 @@ class WesadAttentionPredictorTests(unittest.TestCase):
     def test_threshold_is_configurable(self) -> None:
         boundary = self.fixture["samples"][-1]
         self.assertTrue(self.predictor.predict(boundary["features"]).is_stress)
-        strict_predictor = WesadAttentionPredictor(threshold=0.75)
+        with patch.dict(os.environ, {"SMARTSTRESS_STRESS_THRESHOLD": "0.75"}):
+            strict_predictor = WesadAttentionPredictor()
         self.assertFalse(strict_predictor.predict(boundary["features"]).is_stress)
+
+    def test_rejects_invalid_configured_threshold(self) -> None:
+        with patch.dict(os.environ, {"SMARTSTRESS_STRESS_THRESHOLD": "1.2"}):
+            with self.assertRaisesRegex(ValueError, "must be between 0 and 1"):
+                WesadAttentionPredictor()
 
     def test_rejects_wrong_feature_count(self) -> None:
         with self.assertRaisesRegex(ValueError, "Expected 12 normalized features"):

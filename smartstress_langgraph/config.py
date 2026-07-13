@@ -178,4 +178,19 @@ def get_default_generation_config() -> dict:
     }
 
 
+def get_stress_threshold() -> float:
+    """Return the configurable PhysioSense binary decision threshold."""
+    _initialise_env_files()
+    raw_value = os.getenv("SMARTSTRESS_STRESS_THRESHOLD", "0.5")
+    try:
+        threshold = float(raw_value)
+    except ValueError as exc:
+        raise ValueError(
+            "SMARTSTRESS_STRESS_THRESHOLD must be a number between 0 and 1"
+        ) from exc
+    if not 0.0 <= threshold <= 1.0:
+        raise ValueError("SMARTSTRESS_STRESS_THRESHOLD must be between 0 and 1")
+    return threshold
+
+
 
