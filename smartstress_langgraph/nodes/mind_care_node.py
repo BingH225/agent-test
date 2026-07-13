@@ -1,18 +1,40 @@
+"""MindCare dialogue, physiology-aware RAG, and consent handling."""
+
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Literal, Optional
 
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import AIMessage, HumanMessage
 
-from ..llm.client import generate_chat
 from ..llm.prompts import MIND_CARE_SYSTEM_PROMPT
-from ..rag.retrieval import retrieve_context
 from ..state import SmartStressState, append_audit_event, append_error
 
 
+Confirmation = Literal["yes", "no", "cancel"]
+_YES_RESPONSES = {"yes", "y", "sure", "ok", "okay", "proceed", "confirm"}
+_NO_RESPONSES = {"no", "n", "nope", "nah", "no thanks", "do not proceed"}
+_CANCEL_RESPONSES = {"cancel", "stop", "never mind", "nevermind"}
+
+
+def _generate_chat(*, messages: list[dict[str, str]], system_prompt: str) -> str:
+    from ..llm.client import generate_chat
+
+    return generate_chat(messages=messages, system_prompt=system_prompt)
+
+
+def _normalize_confirmation(text: str) -> Confirmation | None:
+    normalized = " ".join(text.strip().lower().split()).rstrip(".!?")
+    if normalized in _YES_RESPONSES:
+        return "yes"
+    if normalized in _NO_RESPONSES:
+        return "no"
+    if normalized in _CANCEL_RESPONSES:
+        return "cancel"
+    return None
+
+
 def _looks_like_confirmation(text: str) -> bool:
-    lowered = text.strip().lower()
-    return lowered in {"yes", "no", "cancel", "y", "n"}
+    return _normalize_confirmation(text) is not None
 
 
 def _extract_stressor_from_text(text: str) -> Optional[str]:
@@ -23,7 +45,7 @@ def _extract_stressor_from_text(text: str) -> Optional[str]:
         "in <= 15 English words. If you cannot infer it, respond with 'unknown stressor'."
     )
     try:
-        result = generate_chat(
+        result = _generate_chat(
             messages=[{"role": "user", "content": prompt}],
             system_prompt=(
                 "You are a text classifier. Output only the stressor summary. "
@@ -39,235 +61,265 @@ def _extract_stressor_from_text(text: str) -> Optional[str]:
     return result
 
 
+def _is_stress_detected(state: SmartStressState) -> bool:
+    if "stress_detected" in state:
+        return bool(state.get("stress_detected"))
+    probability = float(state.get("current_stress_prob", 0.0))
+    threshold = float(state.get("stress_threshold", 0.5))
+    return probability >= threshold
+
+
+def _physio_summary(state: SmartStressState) -> str:
+    probability = state.get("current_stress_prob")
+    if probability is None:
+        return "No current physiological inference is available."
+    threshold = float(state.get("stress_threshold", 0.5))
+    decision = "elevated" if _is_stress_detected(state) else "not elevated"
+    drivers = state.get("physio_top_drivers", [])[:3]
+    driver_parts = []
+    for driver in drivers:
+        feature = str(driver.get("feature", "unknown_feature")).replace("_", " ")
+        direction = str(driver.get("direction", "contributes to the estimate")).replace(
+            "_", " "
+        )
+        driver_parts.append(f"{feature} ({direction})")
+    driver_text = ", ".join(driver_parts) if driver_parts else "not available"
+    return (
+        f"Frozen model probability={float(probability):.3f}, threshold={threshold:.3f}, "
+        f"decision={decision}; strongest model contributors: {driver_text}. "
+        "These are model attributions, not diagnoses or proof of causation."
+    )
+
+
+def _build_rag_query(user_query: str, state: SmartStressState) -> str:
+    return (
+        "Retrieve concise, evidence-based, non-clinical guidance for short-term "
+        "stress regulation and manageable task planning.\n"
+        f"User concern: {user_query}\n"
+        f"PhysioSense context: {_physio_summary(state)}"
+    )
+
+
+def _retrieve_context(query: str, *, k: int = 3) -> list[str]:
+    from ..rag.retrieval import retrieve_context
+
+    return retrieve_context(query, k=k)
+
+
+def _latest_human_message(state: SmartStressState) -> HumanMessage | None:
+    for message in reversed(state.get("conversation_history", [])):
+        if isinstance(message, HumanMessage):
+            return message
+    return None
+
+
+def _chat_messages(state: SmartStressState) -> list[dict[str, str]]:
+    messages: list[dict[str, str]] = []
+    for message in state.get("conversation_history", []):
+        if isinstance(message, HumanMessage):
+            messages.append({"role": "user", "content": str(message.content)})
+        elif isinstance(message, AIMessage):
+            messages.append({"role": "assistant", "content": str(message.content)})
+    return messages
+
+
+def _with_observability(
+    state: SmartStressState,
+    updates: Dict[str, Any],
+) -> Dict[str, Any]:
+    if state.get("audit_trail"):
+        updates["audit_trail"] = list(state["audit_trail"])
+    if state.get("error_log"):
+        updates["error_log"] = list(state["error_log"])
+    return updates
+
+
 def mind_care_node(state: SmartStressState) -> Dict[str, Any]:
-    """
-    MindCare node: handles conversation, RAG, and presenting TaskRelief proposals.
-    """
-    updates: Dict[str, Any] = {}
+    """Use model decisions and drivers to guide supportive dialogue and RAG."""
+    history = list(state.get("conversation_history", []))
 
-    # Scenario C: waiting for human confirmation
     if state.get("awaiting_human_confirmation"):
-        history = state.get("conversation_history", [])
-        if not history:
-            append_error(
-                state,
-                "awaiting_human_confirmation=True but conversation_history is empty.",
-            )
-            updates["awaiting_human_confirmation"] = False
-            return updates
-
-        last_msg = history[-1]
-        if isinstance(last_msg, HumanMessage):
-            text = last_msg.content.lower()
-        else:
-            text = str(getattr(last_msg, "content", "")).lower()
-
-        normalized = "cancel"
-        lowered = text.strip().lower()
-        if any(token in lowered for token in ["yes", "y", "sure", "ok"]):
-            normalized = "yes"
-        elif any(token in lowered for token in ["no", "n", "nope", "nah"]):
-            normalized = "no"
-
-        updates.update(
-            {
-                "awaiting_human_confirmation": False,
-                "human_confirmation_response": normalized,
-            }
+        latest_human = _latest_human_message(state)
+        confirmation = (
+            _normalize_confirmation(str(latest_human.content)) if latest_human else None
         )
-        append_audit_event(
-            state,
-            node_name="mind_care",
-            summary="Processed human confirmation",
-            details={"response": normalized},
-        )
-        return updates
-
-    # Scenario B: present TaskRelief suggestion
-    if state.get("suggested_action"):
-        action = state["suggested_action"]
-        tool_name = action.get("tool_name", "an action")
-        prompt = (
-            f"I found a possible way to reduce stress: I can run \"{tool_name}\".\n"
-            "This only adjusts your schedule or tasks and is fully reversible.\n"
-            "Do you want me to proceed? Please answer yes or no."
-        )
-        history = list(state.get("conversation_history", []))
-        history.append(AIMessage(content=prompt))
-        updates.update(
-            {
-                "conversation_history": history,
-                "awaiting_human_confirmation": True,
-            }
-        )
-        append_audit_event(
-            state,
-            node_name="mind_care",
-            summary="Presented TaskRelief suggestion",
-            details={"tool_name": tool_name},
-        )
-        return updates
-
-    # Scenario A-1: Determine the latest user message for processing
-    history = state.get("conversation_history", [])
-    latest_human: Optional[HumanMessage] = None
-    for msg in reversed(history):
-        if isinstance(msg, HumanMessage):
-            latest_human = msg
-            break
-
-    # Scenario D: standalone conversational response (text-only, no high stress)
-    # When user sends a message but there's no sensor-driven high stress,
-    # generate a RAG-enhanced empathetic response as a mental health assistant.
-    # This takes priority over stressor extraction to provide a proper reply.
-    current_stress_prob = float(state.get("current_stress_prob", 0.0))
-    if (
-        latest_human
-        and not state.get("current_stressor")
-        and not state.get("suggested_action")
-        and not state.get("awaiting_human_confirmation")
-        and current_stress_prob <= 0.9
-        and len(latest_human.content.strip()) >= 6
-        and not _looks_like_confirmation(latest_human.content)
-    ):
-        user_query = latest_human.content.strip()
-        use_rag = state.get("use_rag", True)  # Default to True
-
-        # Retrieve RAG context if enabled
-        rag_snippets = []
-        if use_rag:
-            try:
-                rag_snippets = retrieve_context(user_query, k=3)
-            except Exception as exc:
-                append_error(state, f"MindCare RAG retrieval failure: {exc}")
-
-        # Build system prompt with optional RAG context
-        system_prompt = MIND_CARE_SYSTEM_PROMPT
-        if rag_snippets:
-            system_prompt += (
-                "\n\nHere is some relevant professional guidance you can draw on "
-                "(use it where appropriate, but do not copy verbatim):\n\n"
-                + "\n---\n".join(rag_snippets)
-            )
-
-        # Build conversation messages from history
-        chat_messages = []
-        for msg in state.get("conversation_history", []):
-            if isinstance(msg, HumanMessage):
-                chat_messages.append({"role": "user", "content": msg.content})
-            elif isinstance(msg, AIMessage):
-                chat_messages.append({"role": "assistant", "content": msg.content})
-
-        # Ensure the latest user message is included
-        if not chat_messages or chat_messages[-1].get("content") != user_query:
-            chat_messages.append({"role": "user", "content": user_query})
-
-        try:
-            reply = generate_chat(
-                messages=chat_messages,
-                system_prompt=system_prompt,
-            ).strip()
-        except Exception as exc:  # noqa: BLE001
-            append_error(state, f"MindCare LLM failure: {exc}")
-            reply = (
-                "Thank you for sharing. I hear you, and what you're feeling is valid. "
-                "Would you like to tell me more about what's been going on?"
-            )
-
-        if reply:
-            history = list(state.get("conversation_history", []))
-            history.append(AIMessage(content=reply))
-            updates.update(
-                {
-                    "conversation_history": history,
-                    "rag_context": rag_snippets,
-                }
+        if confirmation is None:
+            history.append(
+                AIMessage(
+                    content=(
+                        "I could not determine your choice. Please answer yes, no, or cancel. "
+                        "No external system will be changed; this only controls the dry-run."
+                    )
+                )
             )
             append_audit_event(
                 state,
                 node_name="mind_care",
-                summary="Generated RAG-enhanced conversational response" if rag_snippets else "Generated conversational response (no RAG)",
-                details={"use_rag": use_rag, "rag_snippets_count": len(rag_snippets)},
+                summary="Requested explicit confirmation",
             )
-            return updates
+            return _with_observability(
+                state,
+                {"conversation_history": history, "awaiting_human_confirmation": True},
+            )
 
-    # Scenario A-1: high stress + new human message that might describe a stressor
-    # Only extract stressor when sensor data indicates high stress
+        updates: Dict[str, Any] = {
+            "awaiting_human_confirmation": False,
+            "human_confirmation_response": confirmation,
+        }
+        if confirmation != "yes":
+            updates["suggested_action"] = None
+            history.append(
+                AIMessage(content="Understood. I will not run the proposed dry-run action.")
+            )
+            updates["conversation_history"] = history
+        append_audit_event(
+            state,
+            node_name="mind_care",
+            summary="Processed explicit human confirmation",
+            details={"response": confirmation},
+        )
+        return _with_observability(state, updates)
+
+    if state.get("suggested_action"):
+        action = state["suggested_action"]
+        plan = str(action.get("tool_input", {}).get("plan", "the proposed adjustment"))
+        prompt = (
+            f"Proposed dry-run plan: {plan}\n"
+            "No calendar, task manager, or external service will be modified. "
+            "Do you want me to simulate this action and record what would happen? "
+            "Please answer yes, no, or cancel."
+        )
+        history.append(AIMessage(content=prompt))
+        append_audit_event(
+            state,
+            node_name="mind_care",
+            summary="Presented dry-run TaskRelief suggestion",
+            details={"tool_name": action.get("tool_name", "unknown")},
+        )
+        return _with_observability(
+            state,
+            {"conversation_history": history, "awaiting_human_confirmation": True},
+        )
+
+    latest_human = _latest_human_message(state)
+    stress_detected = _is_stress_detected(state)
+
     if (
-        latest_human
-        and current_stress_prob > 0.9
+        stress_detected
+        and latest_human
         and not state.get("current_stressor")
-        and not state.get("awaiting_human_confirmation")
-        and not state.get("suggested_action")
-        and len(latest_human.content.strip()) >= 6
-        and not _looks_like_confirmation(latest_human.content)
+        and len(str(latest_human.content).strip()) >= 6
+        and not _looks_like_confirmation(str(latest_human.content))
     ):
-        stressor = _extract_stressor_from_text(latest_human.content)
+        stressor = _extract_stressor_from_text(str(latest_human.content))
         if stressor:
-            updates["current_stressor"] = stressor
             append_audit_event(
                 state,
                 node_name="mind_care",
                 summary="Identified stressor from dialogue",
-                details={"stressor": stressor},
+                details={"stressor": stressor, "physio_context": _physio_summary(state)},
             )
-            return updates
+            return _with_observability(state, {"current_stressor": stressor})
 
-    # Scenario A: high stress, unknown stressor (sensor-driven, no user message)
-    if current_stress_prob > 0.9 and not state.get("current_stressor"):
-        # Retrieve psychoeducational context (RAG)
-        rag_snippets = retrieve_context(
-            "short-term stress management and scheduling advice", k=3
+    if (
+        latest_human
+        and not state.get("current_stressor")
+        and len(str(latest_human.content).strip()) >= 6
+        and not _looks_like_confirmation(str(latest_human.content))
+    ):
+        user_query = str(latest_human.content).strip()
+        rag_snippets: list[str] = []
+        if state.get("use_rag", True):
+            try:
+                rag_snippets = _retrieve_context(_build_rag_query(user_query, state), k=3)
+            except Exception as exc:
+                append_error(state, f"MindCare RAG retrieval failure: {exc}")
+
+        system_prompt = (
+            MIND_CARE_SYSTEM_PROMPT
+            + "\n\nPhysioSense context (use cautiously):\n"
+            + _physio_summary(state)
         )
-
-        try:
-            system_prompt = (
-                MIND_CARE_SYSTEM_PROMPT
-                + "\n\nSupporting evidence:\n"
+        if rag_snippets:
+            system_prompt += (
+                "\n\nRetrieved professional guidance; paraphrase rather than copying:\n"
                 + "\n---\n".join(rag_snippets)
             )
-            user_prompt = (
-                "Write a short (<=3 sentences) reply that:\n"
-                f"- Acknowledges the user's elevated stress probability ({current_stress_prob:.2f}).\n"
-                "- Offers one brief tip grounded in the evidence above.\n"
-                "- Ends with an open question inviting the user to describe their primary stressor.\n"
-            )
-            reply = generate_chat(
-                messages=[{"role": "user", "content": user_prompt}],
+        try:
+            reply = _generate_chat(
+                messages=_chat_messages(state),
                 system_prompt=system_prompt,
             ).strip()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             append_error(state, f"MindCare LLM failure: {exc}")
             reply = (
-                "I can see your stress indicators are higher than usual. "
-                "If you feel comfortable, could you share the situation that has felt most stressful lately? "
-                "I'll tailor the next steps based on what you share."
+                "Thank you for sharing. What you are feeling matters. "
+                "Would you like to identify the one task or situation that feels most pressing?"
             )
-
-        history = list(state.get("conversation_history", []))
-        history.append(AIMessage(content=reply))
-
-        # For now, we rely on downstream steps to extract a concrete stressor.
-        updates.update(
-            {
-                "conversation_history": history,
-                "rag_context": rag_snippets,
-            }
-        )
+        if reply:
+            history.append(AIMessage(content=reply))
         append_audit_event(
             state,
             node_name="mind_care",
-            summary="Initiated stressor exploration",
-            details={"stress_prob": current_stress_prob},
+            summary=(
+                "Generated physiology-aware RAG response"
+                if rag_snippets
+                else "Generated physiology-aware response"
+            ),
+            details={"rag_snippets_count": len(rag_snippets)},
         )
-        return updates
+        return _with_observability(
+            state,
+            {"conversation_history": history, "rag_context": rag_snippets},
+        )
 
-    # Default: no-op
-    append_audit_event(
-        state,
-        node_name="mind_care",
-        summary="No-op (no new dialogue needed)",
-    )
-    return updates
+    if stress_detected and not state.get("current_stressor"):
+        rag_query = _build_rag_query(
+            "The user has an elevated model estimate but has not described a stressor.",
+            state,
+        )
+        try:
+            rag_snippets = (
+                _retrieve_context(rag_query, k=3) if state.get("use_rag", True) else []
+            )
+        except Exception as exc:
+            append_error(state, f"MindCare RAG retrieval failure: {exc}")
+            rag_snippets = []
 
+        system_prompt = MIND_CARE_SYSTEM_PROMPT + "\n\n" + _physio_summary(state)
+        if rag_snippets:
+            system_prompt += "\n\nSupporting evidence:\n" + "\n---\n".join(rag_snippets)
+        try:
+            reply = _generate_chat(
+                messages=[
+                    {
+                        "role": "user",
+                        "content": (
+                            "Write at most three sentences: cautiously acknowledge the elevated "
+                            "model estimate, offer one brief evidence-grounded step, and ask one "
+                            "focused question about the user's primary stressor. Do not diagnose."
+                        ),
+                    }
+                ],
+                system_prompt=system_prompt,
+            ).strip()
+        except Exception as exc:
+            append_error(state, f"MindCare LLM failure: {exc}")
+            reply = (
+                "Your recent signals may indicate elevated stress, though this is not a diagnosis. "
+                "If you feel comfortable, which task or situation feels most pressing right now?"
+            )
+        history.append(AIMessage(content=reply))
+        append_audit_event(
+            state,
+            node_name="mind_care",
+            summary="Initiated physiology-guided stressor exploration",
+            details={"physio_context": _physio_summary(state)},
+        )
+        return _with_observability(
+            state,
+            {"conversation_history": history, "rag_context": rag_snippets},
+        )
 
+    append_audit_event(state, node_name="mind_care", summary="No new dialogue needed")
+    return _with_observability(state, {})

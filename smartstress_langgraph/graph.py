@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from langgraph.graph import StateGraph, END
-from langgraph.graph import StateGraph, END
 
 from .nodes import (
     physio_sense_node,
@@ -10,25 +9,7 @@ from .nodes import (
     execute_tool_node,
 )
 from .state import SmartStressState
-
-
-def route_after_mind_care(state: SmartStressState) -> str:
-    """
-    Core router after MindCare, mirroring the design doc.
-    """
-    if state.get("awaiting_human_confirmation"):
-        return "wait_for_human_input"
-
-    if state.get("human_confirmation_response") == "yes":
-        return "execute_tool"
-
-    if state.get("human_confirmation_response") in ["no", "cancel"]:
-        return "monitoring_loop"
-
-    if state.get("current_stressor") and not state.get("suggested_action"):
-        return "propose_relief_action"
-
-    return "end"
+from .orchestration import route_after_mind_care
 
 
 def build_workflow_graph() -> StateGraph:
@@ -55,7 +36,6 @@ def build_workflow_graph() -> StateGraph:
             "wait_for_human_input": "wait_for_human_input",
             "execute_tool": "execute_tool",
             "propose_relief_action": "task_relief_propose",
-            "monitoring_loop": "physio_sense",
             "end": END,
         },
     )
