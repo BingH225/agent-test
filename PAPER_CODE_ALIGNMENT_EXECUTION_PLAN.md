@@ -161,6 +161,25 @@
 7. 没有危机话语、安全拒绝、误触发 TaskRelief 的系统级测试。
 8. 无 CI、统一配置 schema、实验 manifest、权重 provenance 和可重复环境锁定。
 
+### 4.4 原始数据抽样与运行时量化
+
+在不修改来源仓库的前提下，对 S17 原始 WESAD ECG 做了只读抽样：
+
+- ECG 与标签均为 4,144,000 个 700 Hz 样本，说明标签索引已经与 ECG 样本对齐。
+- neutral 标签索引为 64,564–891,263；旧代码再把终点乘 700，所请求终点是 ECG 长度的 150.55 倍，因此 NumPy 实际切到记录末尾。
+- 这个所谓 baseline 中只有 20.27% 是 neutral；其余包含 stress、amusement、meditation、其他实验状态和 unlabeled 段。故它不能称为 neutral baseline。
+- 各抽取 12 个 neutral/stress 的 20 秒窗口后，neutral 的旧“RMSSD”中位数为 0.9481 s，标准 RMSSD 为 0.1035 s，约相差 8.75 倍；stress 分别为 0.5334 s 和 0.0140 s，约相差 38.58 倍。
+- 旧 NN50 统计所有 RR 的两两差异；20 秒 neutral 窗口的旧 NN50 中位数为 288，而标准相邻 RR 定义中位数为 11，二者不是同一指标。
+
+运行时验证：
+
+- Attention-DNN 共 63,361 个参数，checkpoint 为 267,297 bytes。
+- CPU 单窗口前向平均约 0.40 ms；2,907 个窗口批量前向约 16.1 ms，因此模型推理不是主要性能瓶颈。
+- 使用 32 个旧 S17 样本作为 `DeepExplainer` background 时，加和检查最大残差为 0.01257，超过 SHAP 默认 0.01 容差并失败。
+- 使用代表修正后 neutral ratio 的单位向量作为 background 时，最大残差降至 0.001324；8 个样本解释约 56 ms。
+
+结论：corrected 流程若使 neutral-normalized feature 真正以 1 为中心，可同时改善生理语义和快速 SHAP 的 background 定义；但该 background 必须作为版本化实验设计，而不能为了绕过检查临时替换。
+
 ## 5. 需要用户确认的设计决策
 
 ### D1. 科研兼容路线
@@ -189,6 +208,8 @@
 - 修正流程后，用 nested subject validation 选择超参数，再训练明确的 production artifact：建议作为默认运行模型。
 
 建议：C 路线下先打包 legacy 权重用于回归测试；production 默认保持不可用或显式 demo 模式，直到 corrected 权重通过实验门。
+
+候选权重的体积和 CPU 延迟都足够小，选择单折、集成或重训模型应由科研有效性决定，而不是由部署性能决定。
 
 ### D4. 阈值和触发策略
 
