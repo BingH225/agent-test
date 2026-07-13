@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -62,14 +63,14 @@ class SensorData(BaseModel):
             raise ValueError(
                 "raw_ecg requires exactly one of baseline_features or baseline_ecg"
             )
-        minimum_samples = int(20 * self.sample_rate_hz)
+        minimum_samples = math.ceil(20 * self.sample_rate_hz)
         if len(self.raw_ecg or []) < minimum_samples:
             raise ValueError(
                 f"raw_ecg must contain at least 20 seconds ({minimum_samples} samples)"
             )
         if has_baseline_ecg:
             baseline_rate = self.baseline_sample_rate_hz or self.sample_rate_hz
-            minimum_baseline_samples = int(20 * baseline_rate)
+            minimum_baseline_samples = math.ceil(20 * baseline_rate)
             if len(self.baseline_ecg or []) < minimum_baseline_samples:
                 raise ValueError(
                     "baseline_ecg must contain at least 20 seconds "

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, TypedDict
 
 if TYPE_CHECKING:
@@ -86,7 +86,7 @@ def append_audit_event(
     """Utility to append a structured audit event to the state."""
     trail = list(state.get("audit_trail", []))
     event = {
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "node": node_name,
         "summary": summary,
     }
@@ -99,7 +99,8 @@ def append_audit_event(
 def append_error(state: SmartStressState, message: str) -> None:
     """Utility to append an error entry to the state's error_log."""
     errors = list(state.get("error_log", []))
-    errors.append(f"{datetime.utcnow().isoformat()}Z {message}")
+    timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    errors.append(f"{timestamp} {message}")
     state["error_log"] = errors
 
 
