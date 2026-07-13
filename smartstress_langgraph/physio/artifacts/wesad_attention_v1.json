@@ -1,0 +1,38 @@
+{
+  "model_id": "wesad_attention_v1",
+  "architecture": "12-feature embedding + 4-head self-attention + DNN",
+  "feature_order": [
+    "mean_hr",
+    "std_hr",
+    "tinn",
+    "hrv_index",
+    "nn50",
+    "pnn50",
+    "mean_hrv",
+    "std_hrv",
+    "rmssd",
+    "fft_mean",
+    "fft_std",
+    "sum_psd"
+  ],
+  "checkpoint": {
+    "filename": "wesad_attention_v1_s17_epoch_37.pth",
+    "sha256": "198CC7CE41D113CCA1CAFB4D2D08F7693D7CF052145E1BD953887A60B3F75161",
+    "source": "smart-stress-model/Models_CrossVal_Full/fold_14_Attention/epoch_37.pth"
+  },
+  "evaluation": {
+    "dataset": "WESAD",
+    "scope": "S17 single-subject holdout",
+    "f1": 0.9578,
+    "accuracy": 0.9797,
+    "precision": 0.9626,
+    "recall": 0.9531,
+    "confusion_matrix": {
+      "true_positive": 670,
+      "true_negative": 2178,
+      "false_positive": 26,
+      "false_negative": 33
+    }
+  },
+  "default_threshold": 0.5
+}

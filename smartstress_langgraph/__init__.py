@@ -1,20 +1,13 @@
-"""
-SmartStress LangGraph backend SDK.
+"""SmartStress LangGraph backend SDK.
 
-This package exposes:
-- LangGraph app builder
-- High-level session APIs for external backends
-- RAG ingestion and retrieval helpers
+Public graph helpers are loaded lazily so independent components such as the
+physiological model do not require the full orchestration stack at import time.
 """
 
-from .graph import build_app
-from . import api as _api
+from __future__ import annotations
 
-from .api import (
-    start_monitoring_session,
-    continue_session,
-    ingest_documents,
-)
+from importlib import import_module
+from typing import Any
 
 __all__ = [
     "build_app",
@@ -22,5 +15,13 @@ __all__ = [
     "continue_session",
     "ingest_documents",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    if name == "build_app":
+        return getattr(import_module(".graph", __name__), name)
+    if name in {"start_monitoring_session", "continue_session", "ingest_documents"}:
+        return getattr(import_module(".api", __name__), name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
