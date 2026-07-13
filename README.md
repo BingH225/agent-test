@@ -89,6 +89,8 @@ sensor = SensorData(
 
 原始 ECG 至少为 20 秒。WESAD 原始采样率为 700 Hz；其他正采样率会先重采样到 700 Hz。归一化必须提供同一用户的中性基线，形式为中性 ECG 或已计算的 12 维未归一化基线特征。
 
+服务端按“一个当前窗口/一次请求”处理数据。若按论文的一秒 stride 连续监测，采集端应每秒提交向前滑动后的当前 ECG 窗口；没有新窗口时 PhysioSense 不写入伪造概率。
+
 ```python
 sensor = SensorData(
     timestamp=datetime.now(timezone.utc).isoformat(),
@@ -147,6 +149,7 @@ FastAPI 入口：
 - `physio_attributions`、`physio_top_drivers`
 - `rag_context`、`current_stressor`
 - `orchestration_decision`、`orchestration_reason`、`orchestration_signals`
+- `safety_escalation`（危机语言优先阻断 TaskRelief）
 - `suggested_action`、`tool_execution_mode`、`external_side_effects`
 - `audit_trail`、`error_log`
 
