@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict, Literal, Optional
+import re
 
 from langchain_core.messages import AIMessage, HumanMessage
 
@@ -14,6 +15,13 @@ Confirmation = Literal["yes", "no", "cancel"]
 _YES_RESPONSES = {"yes", "y", "sure", "ok", "okay", "proceed", "confirm"}
 _NO_RESPONSES = {"no", "n", "nope", "nah", "no thanks", "do not proceed"}
 _CANCEL_RESPONSES = {"cancel", "stop", "never mind", "nevermind"}
+_CRISIS_PATTERNS = (
+    r"\bsuicid(?:e|al)\b",
+    r"\bkill myself\b",
+    r"\bend my life\b",
+    r"\bhurt myself\b",
+    r"\bself[ -]?harm\b",
+)
 
 
 def _generate_chat(*, messages: list[dict[str, str]], system_prompt: str) -> str:
@@ -35,6 +43,11 @@ def _normalize_confirmation(text: str) -> Confirmation | None:
 
 def _looks_like_confirmation(text: str) -> bool:
     return _normalize_confirmation(text) is not None
+
+
+def _contains_crisis_language(text: str) -> bool:
+    normalized = " ".join(text.lower().split())
+    return any(re.search(pattern, normalized) for pattern in _CRISIS_PATTERNS)
 
 
 def _extract_stressor_from_text(text: str) -> Optional[str]:
@@ -137,9 +150,39 @@ def _with_observability(
 def mind_care_node(state: SmartStressState) -> Dict[str, Any]:
     """Use model decisions and drivers to guide supportive dialogue and RAG."""
     history = list(state.get("conversation_history", []))
+    latest_human = _latest_human_message(state)
+
+    if latest_human and _contains_crisis_language(str(latest_human.content)):
+        history.append(
+            AIMessage(
+                content=(
+                    "I'm concerned about your immediate safety. SmartStress cannot provide "
+                    "crisis care: please contact local emergency services or a crisis hotline "
+                    "now, and if possible reach out to a trusted person who can stay with you. "
+                    "I will not propose or run a TaskRelief action."
+                )
+            )
+        )
+        append_audit_event(
+            state,
+            node_name="mind_care",
+            summary="Activated crisis safety escalation",
+            details={"task_relief_blocked": True},
+        )
+        return _with_observability(
+            state,
+            {
+                "conversation_history": history,
+                "safety_escalation": True,
+                "suggested_action": None,
+                "current_stressor": None,
+                "awaiting_human_confirmation": False,
+                "human_confirmation_response": None,
+                "refinement_requested": False,
+            },
+        )
 
     if state.get("awaiting_human_confirmation"):
-        latest_human = _latest_human_message(state)
         confirmation = (
             _normalize_confirmation(str(latest_human.content)) if latest_human else None
         )
@@ -235,7 +278,6 @@ def mind_care_node(state: SmartStressState) -> Dict[str, Any]:
             {"conversation_history": history, "awaiting_human_confirmation": True},
         )
 
-    latest_human = _latest_human_message(state)
     stress_detected = _is_stress_detected(state)
 
     if (

@@ -66,6 +66,7 @@ class SmartStressState(TypedDict, total=False):
     awaiting_human_confirmation: bool
     human_confirmation_response: Optional[str]
     refinement_requested: bool
+    safety_escalation: bool
 
     # === Meta-reflective orchestration ===
     orchestration_decision: str

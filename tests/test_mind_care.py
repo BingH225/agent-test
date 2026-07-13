@@ -23,6 +23,29 @@ class MindCareTests(unittest.TestCase):
         self.assertEqual(_normalize_confirmation("No thanks"), "no")
         self.assertIsNone(_normalize_confirmation("yesterday was difficult"))
 
+    @patch(
+        "smartstress_langgraph.nodes.mind_care_node._extract_stressor_from_text"
+    )
+    def test_crisis_language_blocks_task_relief_before_stressor_extraction(
+        self,
+        extract_stressor,
+    ) -> None:
+        state = {
+            "stress_detected": True,
+            "conversation_history": [HumanMessage(content="I want to end my life")],
+            "suggested_action": {"tool_name": "dry-run", "tool_input": {}},
+            "audit_trail": [],
+        }
+        updates = mind_care_node(state)
+        state.update(updates)
+        self.assertTrue(updates["safety_escalation"])
+        self.assertIsNone(updates["suggested_action"])
+        self.assertIn("emergency services", updates["conversation_history"][-1].content)
+        extract_stressor.assert_not_called()
+        self.assertEqual(reflect_on_state(state).decision, "escalate")
+        state.update(meta_reflect_node(state))
+        self.assertEqual(route_after_orchestrator(state), "end")
+
     def test_invalid_confirmation_keeps_interrupt_active(self) -> None:
         updates = mind_care_node({
             "awaiting_human_confirmation": True,

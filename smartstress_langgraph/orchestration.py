@@ -14,6 +14,7 @@ OrchestrationDecision = Literal[
     "refine",
     "propose",
     "support",
+    "escalate",
     "monitor",
 ]
 
@@ -41,8 +42,15 @@ def reflect_on_state(state: SmartStressState) -> OrchestrationReflection:
         "grounding_count": grounding_count,
         "user_acceptance": acceptance or "not_requested",
         "refinement_requested": bool(state.get("refinement_requested")),
+        "safety_escalation": bool(state.get("safety_escalation")),
     }
 
+    if state.get("safety_escalation"):
+        return OrchestrationReflection(
+            "escalate",
+            "Crisis language blocks TaskRelief and requires immediate human support guidance.",
+            signals,
+        )
     if state.get("awaiting_human_confirmation"):
         return OrchestrationReflection(
             "wait_confirmation",

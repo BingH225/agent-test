@@ -168,6 +168,7 @@ class SmartStressStateView(BaseModel):
     awaiting_human_confirmation: bool = False
     human_confirmation_response: Optional[str] = None
     refinement_requested: bool = False
+    safety_escalation: bool = False
     orchestration_decision: Optional[str] = None
     orchestration_reason: Optional[str] = None
     orchestration_signals: Dict[str, Any] = Field(default_factory=dict)
