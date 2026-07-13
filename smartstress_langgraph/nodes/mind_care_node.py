@@ -168,9 +168,21 @@ def mind_care_node(state: SmartStressState) -> Dict[str, Any]:
         }
         if confirmation != "yes":
             updates["suggested_action"] = None
-            history.append(
-                AIMessage(content="Understood. I will not run the proposed dry-run action.")
-            )
+            if confirmation == "no":
+                updates["refinement_requested"] = True
+                history.append(
+                    AIMessage(
+                        content=(
+                            "Understood. I will not run that dry-run. What should change in "
+                            "the plan—for example its timing, duration, or type of support?"
+                        )
+                    )
+                )
+            else:
+                updates["refinement_requested"] = False
+                history.append(
+                    AIMessage(content="Understood. I have cancelled the proposed dry-run.")
+                )
             updates["conversation_history"] = history
         append_audit_event(
             state,
@@ -179,6 +191,28 @@ def mind_care_node(state: SmartStressState) -> Dict[str, Any]:
             details={"response": confirmation},
         )
         return _with_observability(state, updates)
+
+    if state.get("refinement_requested"):
+        latest_human = _latest_human_message(state)
+        if latest_human and not _looks_like_confirmation(str(latest_human.content)):
+            feedback = str(latest_human.content).strip()
+            preferences = dict(state.get("user_preferences", {}))
+            preferences["intervention_feedback"] = feedback
+            append_audit_event(
+                state,
+                node_name="mind_care",
+                summary="Captured intervention refinement feedback",
+                details={"feedback": feedback},
+            )
+            return _with_observability(
+                state,
+                {
+                    "user_preferences": preferences,
+                    "refinement_requested": False,
+                    "human_confirmation_response": None,
+                },
+            )
+        return _with_observability(state, {})
 
     if state.get("suggested_action"):
         action = state["suggested_action"]

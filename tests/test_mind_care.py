@@ -10,7 +10,11 @@ from smartstress_langgraph.nodes.mind_care_node import (
     _normalize_confirmation,
     mind_care_node,
 )
-from smartstress_langgraph.orchestration import route_after_mind_care
+from smartstress_langgraph.orchestration import (
+    meta_reflect_node,
+    reflect_on_state,
+    route_after_orchestrator,
+)
 
 
 class MindCareTests(unittest.TestCase):
@@ -29,7 +33,7 @@ class MindCareTests(unittest.TestCase):
         self.assertTrue(updates["awaiting_human_confirmation"])
         self.assertIn("yes, no, or cancel", updates["conversation_history"][-1].content)
 
-    def test_decline_clears_proposal_and_routes_to_end(self) -> None:
+    def test_decline_clears_proposal_and_routes_to_refinement(self) -> None:
         state = {
             "awaiting_human_confirmation": True,
             "conversation_history": [HumanMessage(content="no")],
@@ -39,7 +43,28 @@ class MindCareTests(unittest.TestCase):
         updates = mind_care_node(state)
         state.update(updates)
         self.assertIsNone(updates["suggested_action"])
-        self.assertEqual(route_after_mind_care(state), "end")
+        self.assertTrue(updates["refinement_requested"])
+        state.update(meta_reflect_node(state))
+        self.assertEqual(state["orchestration_decision"], "refine")
+        self.assertEqual(route_after_orchestrator(state), "wait_for_human_input")
+
+    def test_refinement_feedback_is_saved_before_replanning(self) -> None:
+        state = {
+            "refinement_requested": True,
+            "human_confirmation_response": "no",
+            "current_stressor": "project review",
+            "conversation_history": [
+                HumanMessage(content="Make it shorter and schedule it after lunch")
+            ],
+            "user_preferences": {},
+            "audit_trail": [],
+        }
+        updates = mind_care_node(state)
+        state.update(updates)
+        self.assertFalse(updates["refinement_requested"])
+        self.assertIn("shorter", updates["user_preferences"]["intervention_feedback"])
+        reflection = reflect_on_state(state)
+        self.assertEqual(reflection.decision, "propose")
 
     def test_rag_query_contains_shap_driver_context(self) -> None:
         query = _build_rag_query(
@@ -115,18 +140,30 @@ class MindCareTests(unittest.TestCase):
 
 class OrchestrationTests(unittest.TestCase):
     def test_routes_consent_and_stressor_states_explicitly(self) -> None:
-        self.assertEqual(
-            route_after_mind_care({"awaiting_human_confirmation": True}),
-            "wait_for_human_input",
+        cases = (
+            ({"awaiting_human_confirmation": True}, "wait_for_human_input"),
+            ({"human_confirmation_response": "yes"}, "execute_tool"),
+            ({"current_stressor": "deadline"}, "propose_relief_action"),
         )
-        self.assertEqual(
-            route_after_mind_care({"human_confirmation_response": "yes"}),
-            "execute_tool",
-        )
-        self.assertEqual(
-            route_after_mind_care({"current_stressor": "deadline"}),
-            "propose_relief_action",
-        )
+        for initial_state, expected_route in cases:
+            with self.subTest(expected_route=expected_route):
+                state = dict(initial_state)
+                state.update(meta_reflect_node(state))
+                self.assertEqual(route_after_orchestrator(state), expected_route)
+
+    def test_reflection_persists_all_paper_signals(self) -> None:
+        state = {
+            "current_stress_prob": 0.8,
+            "stress_threshold": 0.5,
+            "stress_detected": True,
+            "current_stressor": "deadline",
+            "rag_context": ["grounded passage"],
+        }
+        reflection = reflect_on_state(state)
+        self.assertEqual(reflection.decision, "propose")
+        self.assertEqual(reflection.signals["physiological_urgency"], 0.8)
+        self.assertTrue(reflection.signals["semantic_specificity"])
+        self.assertEqual(reflection.signals["grounding_count"], 1)
 
 
 if __name__ == "__main__":

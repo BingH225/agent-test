@@ -65,6 +65,12 @@ class SmartStressState(TypedDict, total=False):
     # === Control flow & safety (HITL) ===
     awaiting_human_confirmation: bool
     human_confirmation_response: Optional[str]
+    refinement_requested: bool
+
+    # === Meta-reflective orchestration ===
+    orchestration_decision: str
+    orchestration_reason: str
+    orchestration_signals: Dict[str, Any]
 
     # === Observability & audit ===
     error_log: List[str]
