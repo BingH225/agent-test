@@ -19,13 +19,17 @@ class TaskReliefTests(unittest.TestCase):
         updates = task_relief_propose_node({
             "current_stressor": "project review",
             "physio_top_drivers": [{"feature": "std_hrv"}],
+            "rag_context": ["Use brief workload segmentation. [source: guide-1]"],
             "audit_trail": [],
         })
         action = updates["suggested_action"]
         self.assertEqual(action["tool_name"], DRY_RUN_TOOL_NAME)
         self.assertEqual(action["execution_mode"], "dry_run")
         self.assertFalse(action["tool_input"]["external_side_effects"])
-        self.assertIn("std_hrv", generate_chat.call_args.kwargs["messages"][0]["content"])
+        prompt = generate_chat.call_args.kwargs["messages"][0]["content"]
+        self.assertIn("std_hrv", prompt)
+        self.assertIn("guide-1", prompt)
+        self.assertEqual(len(action["tool_input"]["grounding_sources"]), 1)
 
     def test_consent_only_simulates_allowlisted_action(self) -> None:
         updates = execute_tool_node({

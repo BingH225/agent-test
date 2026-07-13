@@ -33,6 +33,17 @@ def _driver_context(state: SmartStressState) -> str:
     )
 
 
+def _grounding_context(state: SmartStressState) -> str:
+    snippets = [str(snippet).strip() for snippet in state.get("rag_context", [])[:3]]
+    snippets = [snippet for snippet in snippets if snippet]
+    if not snippets:
+        return "No retrieved support passage is available; keep the proposal conservative."
+    return (
+        "Keep the proposal consistent with this retrieved support material:\n- "
+        + "\n- ".join(snippets)
+    )
+
+
 def _with_observability(
     state: SmartStressState,
     updates: Dict[str, Any],
@@ -60,6 +71,7 @@ def task_relief_propose_node(state: SmartStressState) -> Dict[str, Any]:
         f"The user's primary stressor is: {stressor}.\n"
         f"{preference_clause}"
         f"Personalization context: {_driver_context(state)}\n"
+        f"Grounding context: {_grounding_context(state)}\n"
         "Propose one concrete, low-risk and reversible task or schedule adjustment. "
         "This is a dry-run proposal only: do not claim that any calendar, task, message, "
         "or external service was changed. Answer in one English sentence with the action "
@@ -87,6 +99,7 @@ def task_relief_propose_node(state: SmartStressState) -> Dict[str, Any]:
             "physio_driver_features": [
                 driver.get("feature") for driver in state.get("physio_top_drivers", [])[:3]
             ],
+            "grounding_sources": list(state.get("rag_context", [])[:3]),
             "external_side_effects": False,
         },
     }
