@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 from smartstress_langgraph.nodes.physio_sense_node import physio_sense_node
 
@@ -36,6 +37,8 @@ class PhysioSenseNodeTests(unittest.TestCase):
         self.assertTrue(updates["stress_detected"])
         self.assertEqual(updates["physio_model_id"], "wesad_attention_v1")
         self.assertEqual(updates["physio_input_source"], "normalized_features")
+        self.assertEqual(len(updates["physio_attributions"]), 12)
+        self.assertEqual(len(updates["physio_top_drivers"]), 3)
         self.assertEqual(updates["stress_timestamps"], [timestamp])
         self.assertIsNone(updates["raw_sensor_input"])
 
@@ -55,6 +58,28 @@ class PhysioSenseNodeTests(unittest.TestCase):
         self.assertNotIn("stress_history", updates)
         self.assertIn("PhysioSense inference failure", updates["error_log"][-1])
         self.assertIsNone(updates["raw_sensor_input"])
+
+    def test_shap_failure_does_not_erase_model_result(self) -> None:
+        with patch(
+            "smartstress_langgraph.nodes.physio_sense_node._get_explainer",
+            side_effect=RuntimeError("explanation unavailable"),
+        ):
+            updates = physio_sense_node({
+                "raw_sensor_input": {
+                    "normalized_features": self.stress_sample["features"],
+                },
+                "stress_history": [],
+                "stress_timestamps": [],
+                "error_log": [],
+                "audit_trail": [],
+            })
+        self.assertAlmostEqual(
+            updates["current_stress_prob"],
+            self.stress_sample["expected_probability"],
+            places=6,
+        )
+        self.assertEqual(updates["physio_attributions"], {})
+        self.assertIn("SHAP explanation failure", updates["error_log"][-1])
 
 
 if __name__ == "__main__":

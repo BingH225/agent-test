@@ -20,6 +20,14 @@ def _get_predictor() -> WesadAttentionPredictor:
     return WesadAttentionPredictor()
 
 
+@lru_cache(maxsize=1)
+def _get_explainer():
+    """Construct the SHAP explainer lazily because importing SHAP is expensive."""
+    from ..physio.explain import WesadGradientShapExplainer
+
+    return WesadGradientShapExplainer(_get_predictor())
+
+
 def _run_stress_model(raw_sensor_input: Dict[str, Any]) -> Dict[str, Any]:
     """Prepare one sensor payload and return paper-model inference fields."""
     model_input = dict(raw_sensor_input)
@@ -62,6 +70,17 @@ def physio_sense_node(state: SmartStressState) -> Dict[str, Any]:
             "audit_trail": list(state.get("audit_trail", [])),
         }
 
+    explanation_error: str | None = None
+    try:
+        explanation = _get_explainer().explain(inference["physio_features"])
+        attributions = explanation.attributions
+        top_drivers = list(explanation.top_drivers)
+    except Exception as exc:  # Explanation failure must not erase valid inference.
+        explanation_error = str(exc)
+        attributions = {}
+        top_drivers = []
+        append_error(state, f"PhysioSense SHAP explanation failure: {exc}")
+
     sensor_timestamp = raw_data.get("timestamp")
     if not sensor_timestamp:
         sensor_timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -78,14 +97,21 @@ def physio_sense_node(state: SmartStressState) -> Dict[str, Any]:
             "current_stress_prob": inference["current_stress_prob"],
             "stress_detected": inference["stress_detected"],
             "threshold": inference["stress_threshold"],
+            "top_driver_features": [driver["feature"] for driver in top_drivers],
+            "explanation_error": explanation_error,
         },
     )
     return {
         **inference,
         "stress_history": history,
         "stress_timestamps": timestamps,
-        "physio_attributions": {},
-        "physio_top_drivers": [],
+        "physio_attributions": attributions,
+        "physio_top_drivers": top_drivers,
         "raw_sensor_input": None,
         "audit_trail": list(state.get("audit_trail", [])),
+        **(
+            {"error_log": list(state.get("error_log", []))}
+            if explanation_error
+            else {}
+        ),
     }
