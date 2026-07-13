@@ -11,6 +11,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
+from smartstress_langgraph.io_models import ContinueSessionRequest, StartSessionRequest
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -42,13 +44,15 @@ async def health_check():
     return {
         "status": "healthy",
         "service": "Smart Stress Agent API",
-        "version": "1.0.0"
+        "version": "1.0.0",
+        "physio_model_id": "wesad_attention_v1",
+        "task_relief_mode": "dry_run",
     }
 
 # --- API Endpoints ---
 
 @app.post("/api/start_session")
-async def api_start_session(req: dict):
+async def api_start_session(req: StartSessionRequest):
     """
     Start a new monitoring session
     
@@ -61,13 +65,9 @@ async def api_start_session(req: dict):
     try:
         # Import here to catch import errors gracefully
         from smartstress_langgraph.api import start_monitoring_session
-        from smartstress_langgraph.io_models import StartSessionRequest
+        handle, view = start_monitoring_session(req)
         
-        # Parse request
-        session_req = StartSessionRequest(**req)
-        handle, view = start_monitoring_session(session_req)
-        
-        logger.info(f"Started session for user: {session_req.user.user_id}")
+        logger.info(f"Started session for user: {req.user.user_id}")
         
         # Convert Pydantic models to dict
         return {
@@ -91,7 +91,7 @@ async def api_start_session(req: dict):
         )
 
 @app.post("/api/continue_session")
-async def api_continue_session(req: dict):
+async def api_continue_session(req: ContinueSessionRequest):
     """
     Continue an existing monitoring session
     
@@ -104,13 +104,9 @@ async def api_continue_session(req: dict):
     try:
         # Import here to catch import errors gracefully
         from smartstress_langgraph.api import continue_session
-        from smartstress_langgraph.io_models import ContinueSessionRequest
+        handle, view = continue_session(req)
         
-        # Parse request
-        continue_req = ContinueSessionRequest(**req)
-        handle, view = continue_session(continue_req)
-        
-        logger.info(f"Continued session: {continue_req.session_handle.thread_id}")
+        logger.info(f"Continued session: {req.session_handle.thread_id}")
         
         return {
             "success": True,
