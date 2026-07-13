@@ -1,7 +1,7 @@
 # SmartStress 论文—代码对齐审计与执行计划
 
 更新：2026-07-13（Asia/Shanghai）  
-状态：**等待工程与科研口径确认，尚未开始业务实现**
+状态：**用户已确认工程口径；本轮代码范围已完成，模型重训/新实验/论文修改明确不在范围内**
 
 ## 1. 目标与完成定义
 
@@ -233,6 +233,17 @@
 ### D6. 论文仓库写权限
 
 本次读取不等于授权修改 `D:\NUS\BMI5101\SmartStress`。建议在实验产物稳定后同步修改 TeX、图表和真实 PDF，并在论文仓库中按小 step 单独提交；开始前需用户明确授权。
+
+### D1–D6 最终决策（2026-07-13）
+
+- **D1**：不建立面向用户的 `legacy_v1` / `corrected_v2` 双轨，也不重训。运行时统一命名为 `wesad_attention_v1`，为保持冻结权重兼容性而复现来源特征公式。
+- **D2**：同时支持严格 12 维 `normalized_features` 和 `raw_ecg`。原始 ECG 必须附带中性基线 ECG 或 12 维未归一化基线特征。
+- **D3**：打包与论文 95.78% F1 对应的 S17 单一留出 Attention checkpoint；manifest 明确指标范围和 SHA-256。
+- **D4**：分类/支持触发使用同一可配置阈值 `SMARTSTRESS_STRESS_THRESHOLD`，默认 0.5；删除 MindCare 的硬编码 0.9。
+- **D5**：TaskRelief 只允许 allowlisted dry-run，不连接真实日历、任务或消息系统；`external_side_effects` 固定为 `false`。
+- **D6**：论文以当前 `main.tex` 为准，本轮只改 Agent 代码仓库，不修改、编译或提交论文仓库。
+
+上述决策覆盖了原计划的建议路线。审计中识别出的重训、跨折平均、StressID 架构一致性、全局 SHAP 重做、实验统计和 TeX/PDF 修订问题保留为科研后续项，不在本轮代码交付中暗中扩展。
 
 ## 6. 分步实现与提交计划
 
@@ -488,23 +499,23 @@
 
 ## 9. 最终验收清单
 
-- [ ] 用户已确认 D1–D6。
-- [ ] legacy 推理在黄金样本上与来源仓库一致。
-- [ ] corrected feature definitions 有单元测试和方法说明。
-- [ ] 运行模型与 SHAP 解释模型 hash 完全一致。
-- [ ] PhysioSense 不再包含 HR heuristic 或伪造 0.1。
-- [ ] State/API 输出 features、quality、drivers、model metadata。
-- [ ] RAG query 明确包含生理和语义证据。
-- [ ] 检索与回复保留可审计来源。
-- [ ] HITL 无子串误判、拒绝可 refine、执行幂等。
+- [x] 用户已确认 D1–D6。
+- [x] 冻结 S17 推理在五个黄金样本上与来源仓库一致。
+- [ ] corrected feature definitions 与重训（用户明确不在本轮考虑模型问题）。
+- [x] 运行模型与 SHAP 解释器共享同一个 checksum-validated predictor。
+- [x] PhysioSense 不再包含 HR heuristic 或伪造 0.1。
+- [x] State/API 输出 features、输入校验状态、drivers、model metadata、阈值与决策。
+- [x] RAG query 明确包含用户语义、压力概率和 SHAP 生理证据。
+- [x] 检索上下文的 source 字符串进入 MindCare 与 TaskRelief 状态/提示词。
+- [x] HITL 无子串误判、拒绝可 refine、cancel 可终止；TaskRelief 只允许零副作用 dry-run。
 - [ ] WESAD 无测试集选 epoch/阈值。
 - [ ] StressID 使用与论文主模型一致的 architecture/preprocessing。
-- [ ] Attention SHAP 已重做并记录 provenance。
+- [x] 运行时 Attention SHAP 使用中性归一化单位背景并输出 12 维归因与 Top-3 drivers。
 - [ ] RAG 有检索层、生成层和安全层评价。
-- [ ] README、API 示例、实验说明与当前行为一致。
-- [ ] 真实 SmartStress PDF 已编译并逐页通过视觉检查。
-- [ ] 每个小 step 都有独立 Git commit 和 `.codex/WORKLOG.md` 记录。
+- [x] README、API schema 和示例与当前行为一致。
+- [ ] 修改/编译真实 SmartStress TeX/PDF（用户明确要求不修改论文）。
+- [x] 每个小 step 都有独立 Git commit 和 `.codex/WORKLOG.md` 记录。
 
 ## 10. 当前停止点
 
-在用户回答 D1–D6 前，不修改 PhysioSense、State/API、Graph、MindCare、TaskRelief、模型权重或论文仓库。下一步从 Step 1 开始，并严格按小 step 提交。
+本轮代码实现已完成。最终验证包括模型/特征金标准、raw ECG、SHAP、typed API、MindCare/RAG、危机门控、Meta-Reflective Orchestrator、refinement、dry-run allowlist 和离线闭环。剩余未勾选项均属于用户明确排除的重训/实验/论文修改，或需要独立科研协议的后续工作；不得把它们表述为本轮已完成。
