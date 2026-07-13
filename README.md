@@ -1,43 +1,45 @@
-# SmartStress Agent (LangGraph Edition)
+# SmartStress Agent
 
-SmartStress is a **multi-agent** stress monitoring and intervention system built on **LangGraph**. It combines **physiological data analysis** (PhysioSense) with **Large Language Models** (LLM) to provide a closed-loop service ranging from stress detection and psychological support to schedule intervention.
+SmartStress 是与当前论文叙述对齐的闭环压力支持原型：PhysioSense 从 ECG 或 12 维生理特征估计压力并生成 SHAP 解释；MindCare 将压力概率、主要生理驱动和用户表达写入 RAG 查询；Meta-Reflective Orchestrator 决定支持、澄清、提案、确认或结束；TaskRelief 只生成和模拟 dry-run 调整。
 
-## 🌟 Core Features
+当前实现固定使用 `wesad_attention_v1`，即论文 Attention-DNN 的 S17 checkpoint。论文中的 95.78% F1 指 WESAD S17 单一留出结果，不是重新训练结果，也不是跨全部受试者的平均值。本仓库不会重训模型。
 
-* **State Machine Architecture**: Powered by a LangGraph directed cyclic graph, supporting a non-linear "Monitor -> Detect -> Intervene -> Monitor" workflow.
-* **Multi-Modal Sensing**: Integrates physiological sensor data (HR, HRV) with natural language dialogue for precise stress assessment.
-* **Data Persistence**: Built-in **SQLite** backend ensuring cross-session memory, long-term conversation history retention, and state recovery after system restarts.
-* **Human-in-the-Loop (Safety)**: Critical operations (like schedule modifications) feature an interrupt mechanism requiring explicit human confirmation to ensure clinical and operational safety.
-* **RAG Knowledge Base**: Integrated vector retrieval provides the AI with psychology-based advice grounded in local documents.
+## 闭环
 
-## 🧠 Agent Architecture
+```text
+12-D normalized features ─┐
+                          ├─> PhysioSense ─> probability + SHAP drivers
+raw ECG + neutral baseline┘                         │
+                                                   v
+user utterance ──────────────────────────────> MindCare + RAG
+                                                   │
+                                                   v
+                                      Meta-Reflective Orchestrator
+                                                   │
+                                stressor ─> TaskRelief proposal
+                                                   │
+                                      explicit yes / no / cancel
+                                                   │
+                                    allowlisted dry-run simulation only
+```
 
-The system consists of three collaborative Agent nodes:
+TaskRelief 没有真实日历、任务管理器或消息服务连接。即使用户回答 `yes`，结果仍为 `execution_mode="dry_run"` 和 `external_side_effects=false`。
 
-| Agent Node      | Role                  | Responsibility                                                                                                   |
-| :-------------- | :-------------------- | :--------------------------------------------------------------------------------------------------------------- |
-| **PhysioSense** | Physiological Sensing | Analyzes sensor data (HR, HRV) to calculate real-time stress probability.                                        |
-| **MindCare**    | Psychological Support | Engages in empathetic dialogue, identifies specific stressors, and queries the RAG knowledge base when needed.   |
-| **TaskRelief**  | Task Intervention     | Generates concrete schedule adjustment plans based on identified stressors and executes them upon user approval. |
+## 安装与配置
 
-## 🛠️ Installation & Configuration
-
-### 1. Prerequisites
-
-Python 3.10+ is required. Using a virtual environment is recommended.
+需要 Python 3.10+。
 
 ```bash
-# Install dependencies
 pip install -r requirements.txt
 ```
 
-### 2. Configuration
-
-Create a `.env` file in the project root:
+项目根目录可创建 `.env`：
 
 ```env
-GOOGLE_API_KEY=your_google_api_key_here
-FRONTEND_PATH=/path/to/smart-stress-ui/dist
+GOOGLE_API_KEY=your_google_api_key
+SMARTSTRESS_STRESS_THRESHOLD=0.5
+
+# 仅在使用 TiDB RAG 时需要
 DB_HOST=your_tidb_host
 DB_PORT=4000
 DB_USERNAME=your_tidb_user
@@ -45,78 +47,128 @@ DB_PASSWORD=your_tidb_password
 DB_DATABASE=your_tidb_database
 ```
 
-*(Alternatively, you can use a legacy `.API_KEY` file for the API key)*
+模型 checkpoint、SHA-256、特征顺序和 S17 指标记录在 `smartstress_langgraph/physio/artifacts/wesad_attention_v1.json`。加载时会验证 checkpoint 哈希。
 
-## 🚀 Quick Start
+## 输入契约
 
-### Using the SDK
+每个 `SensorData` 必须且只能选择一种输入方式。
 
-You can directly import the core SDK in Python to start or continue a session:
+### 方式 A：12 维归一化特征
+
+这是模型的直接输入。顺序固定为：
+
+1. `mean_hr`
+2. `std_hr`
+3. `tinn`
+4. `hrv_index`
+5. `nn50`
+6. `pnn50`
+7. `mean_hrv`
+8. `std_hrv`
+9. `rmssd`
+10. `fft_mean`
+11. `fft_std`
+12. `sum_psd`
+
+```python
+from datetime import datetime, timezone
+
+from smartstress_langgraph.io_models import SensorData
+
+sensor = SensorData(
+    timestamp=datetime.now(timezone.utc).isoformat(),
+    normalized_features=[
+        1.4521011, 0.1006440, 0.0561910, 0.0005347,
+        0.0000027, 0.0986588, 0.6364315, 0.0987973,
+        0.6163059, 1.4509790, 1.5290556, 0.0092296,
+    ],
+)
+```
+
+### 方式 B：原始 ECG
+
+原始 ECG 至少为 20 秒。WESAD 原始采样率为 700 Hz；其他正采样率会先重采样到 700 Hz。归一化必须提供同一用户的中性基线，形式为中性 ECG 或已计算的 12 维未归一化基线特征。
+
+```python
+sensor = SensorData(
+    timestamp=datetime.now(timezone.utc).isoformat(),
+    raw_ecg=current_window_samples,
+    sample_rate_hz=700,
+    baseline_ecg=neutral_baseline_samples,
+    baseline_sample_rate_hz=700,
+)
+```
+
+由于不重训模型，ECG 路径严格复现原 checkpoint 的特征公式。不能在保留该权重时把 NN50、RMSSD 等公式替换为另一套实现；那会改变模型输入分布。
+
+## SDK 示例
 
 ```python
 from smartstress_langgraph.api import start_monitoring_session
-from smartstress_langgraph.io_models import StartSessionRequest, UserInfo, SensorData
+from smartstress_langgraph.examples.sample_data import DEMO_STRESS_FEATURES
+from smartstress_langgraph.io_models import SensorData, StartSessionRequest, UserInfo
 
-# 1. Start a session (Automatically creates SQLite persistence record)
-handle, state = start_monitoring_session(
+handle, view = start_monitoring_session(
     StartSessionRequest(
-        user=UserInfo(user_id="user_1", session_id="session_alpha"),
-        initial_sensor_data=SensorData(timestamp="...", values={"hr": 95})
+        user=UserInfo(user_id="user-1", session_id="session-1"),
+        initial_sensor_data=SensorData(
+            timestamp="2026-07-13T18:00:00Z",
+            normalized_features=DEMO_STRESS_FEATURES,
+        ),
     )
 )
 
-# 2. Inspect current state
-print(f"Current Stress Probability: {state.current_stress_prob}")
+print(view.current_stress_prob)
+print(view.physio_top_drivers)
+print(view.orchestration_decision)
 ```
 
-### Test Scripts
-
-The project includes several ready-to-use scripts for verifying core functionality:
-
-* `python run_api_key_test.py`: Smoke test for the full "Sense -> Chat -> Plan" flow.
-* `python verify_persistence.py`: Verifies state recovery from `smartstress.db` after a restart.
-* `python test_api_conn.py`: Tests LLM API connectivity.
-* `python smoke_test.py`: Quick RAG retrieval smoke test.
-
-### Starting the Server
-
-The project includes a FastAPI server for REST API access and frontend hosting.
+完整示例：
 
 ```bash
+python -m smartstress_langgraph.examples.demo_session
+python run_api_key_test.py
 python server.py
 ```
 
-* **API Docs**: `http://localhost:8000/docs`
-* **Frontend**: `http://localhost:8000` (Requires `FRONTEND_PATH` in `.env`)
+FastAPI 入口：
 
-## 📚 RAG Knowledge Base Management
+- `GET /health`
+- `POST /api/start_session`
+- `POST /api/continue_session`
+- `GET /docs`
 
-MindCare can utilize local documents to enhance its responses.
+## 输出状态
 
-1.  Place `.txt` or `.md` files in the `rag_docs/` directory.
-2.  Run the ingestion script:
-    ```bash
-    python -m smartstress_langgraph.examples.ingest_docs_example rag_docs
-    ```
-    This writes embeddings and documents into TiDB tables (`rag_documents`, `rag_embeddings`) for runtime retrieval.
+前端/API 可读取：
 
-## 📂 Project Structure
+- `current_stress_prob`、`stress_detected`、`stress_threshold`
+- `physio_model_id`、`physio_input_source`、`physio_feature_map`
+- `physio_attributions`、`physio_top_drivers`
+- `rag_context`、`current_stressor`
+- `orchestration_decision`、`orchestration_reason`、`orchestration_signals`
+- `suggested_action`、`tool_execution_mode`、`external_side_effects`
+- `audit_trail`、`error_log`
 
-```text
-smart-stress-agent/
-├── smartstress_langgraph/    # Core SDK Package
-│   ├── nodes/                # Agent Logic (PhysioSense, MindCare, TaskRelief)
-│   ├── rag/                  # Vector Store & Retrieval Logic
-│   ├── llm/                  # Gemini Client Wrapper
-│   ├── graph.py              # LangGraph Definition & SQLite Persistence
-│   ├── state.py              # Global State (TypedDict) Definition
-│   └── api.py                # High-level Business API
-├── server.py                 # FastAPI Backend Entry Point
-├── verify_persistence.py     # Persistence Test Script
-├── run_api_key_test.py       # Workflow Smoke Test
-└── requirements.txt          # Dependencies
+## 测试
+
+全部测试使用标准库 `unittest`：
+
+```bash
+python -m unittest discover -s tests -v
 ```
 
------
+关键覆盖包括：
 
-*Note: Session data is stored in the local `smartstress.db` file by default. Delete this file if you wish to reset the experimental environment.*
+- S17 金标准概率和 checkpoint 哈希
+- 源预处理算法金标准特征
+- 12 维/原始 ECG 输入校验与中性基线归一化
+- SHAP 归因和失败隔离
+- MindCare 生理增强 RAG 查询
+- `yes` / `no` / `cancel`、refinement 和 Meta-Reflective 路由
+- TaskRelief dry-run allowlist
+- 不访问 Gemini、TiDB 或外部任务服务的闭环集成流程
+
+## 边界
+
+该项目是非临床研究原型，不提供诊断、药物或危机干预建议。当前检测结果只对应已记录的 WESAD S17 单一留出评估；模型外推、跨数据集适配和真实环境部署不在本次代码修改范围内。

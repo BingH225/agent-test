@@ -4,10 +4,10 @@ from __future__ import annotations
 Minimal demo showing how to run one monitoring step.
 
 Usage (from project root):
-    python -m Agents_LangGraph.smartstress_langgraph.examples.demo_session
+    python -m smartstress_langgraph.examples.demo_session
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from ..api import continue_session, start_monitoring_session
 from ..io_models import (
@@ -17,14 +17,15 @@ from ..io_models import (
     StartSessionRequest,
     UserInfo,
 )
+from .sample_data import DEMO_STRESS_FEATURES
 
 
 def main() -> None:
     req = StartSessionRequest(
         user=UserInfo(user_id="demo-user", session_id="demo-session"),
         initial_sensor_data=SensorData(
-            timestamp=datetime.utcnow().isoformat() + "Z",
-            values={"hr": 95, "hrv": 25},
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            normalized_features=DEMO_STRESS_FEATURES,
         ),
     )
     handle, state_view = start_monitoring_session(req)
@@ -46,6 +47,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
 
 

@@ -16,6 +16,7 @@ from smartstress_langgraph.io_models import (
     StartSessionRequest,
     UserInfo,
 )
+from smartstress_langgraph.examples.sample_data import DEMO_STRESS_FEATURES
 
 
 def run_api_key_test() -> None:
@@ -26,7 +27,7 @@ def run_api_key_test() -> None:
         user=UserInfo(user_id="demo-user", session_id="api-key-test"),
         initial_sensor_data=SensorData(
             timestamp=datetime.now(timezone.utc).isoformat(),
-            values={"hr": 95, "hrv": 28},
+            normalized_features=DEMO_STRESS_FEATURES,
         ),
     )
     handle, initial_state = start_monitoring_session(start_request)
@@ -36,6 +37,10 @@ def run_api_key_test() -> None:
             {
                 "session_handle": handle.model_dump(),
                 "current_stress_prob": initial_state.current_stress_prob,
+                "stress_detected": initial_state.stress_detected,
+                "physio_model_id": initial_state.physio_model_id,
+                "physio_top_drivers": initial_state.physio_top_drivers,
+                "orchestration_decision": initial_state.orchestration_decision,
                 "stress_history": initial_state.stress_history,
             },
             ensure_ascii=False,
@@ -61,6 +66,7 @@ def run_api_key_test() -> None:
             {
                 "current_stressor": updated_state.current_stressor,
                 "suggested_action": updated_state.suggested_action,
+                "orchestration_decision": updated_state.orchestration_decision,
                 "conversation_history": updated_state.conversation_history,
             },
             ensure_ascii=False,
