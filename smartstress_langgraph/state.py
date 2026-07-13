@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, TypedDict
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, TypedDict
 
 if TYPE_CHECKING:
     from langchain_core.messages import BaseMessage
@@ -14,6 +14,7 @@ class ToolCall(TypedDict):
     """A proposed tool call from TaskRelief or other agents."""
 
     tool_name: str
+    execution_mode: Literal["dry_run"]
     tool_input: Dict[str, Any]
 
 
@@ -51,6 +52,8 @@ class SmartStressState(TypedDict, total=False):
     # === TaskRelief (L3) ===
     suggested_action: Optional[ToolCall]
     tool_output: Optional[str]
+    tool_execution_mode: Literal["dry_run"]
+    external_side_effects: bool
 
     # === RAG context ===
     rag_context: List[str]

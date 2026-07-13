@@ -162,6 +162,8 @@ class SmartStressStateView(BaseModel):
     current_stressor: Optional[str] = None
     suggested_action: Optional[Dict[str, Any]] = None
     tool_output: Optional[str] = None
+    tool_execution_mode: Optional[str] = None
+    external_side_effects: bool = False
     awaiting_human_confirmation: bool = False
     human_confirmation_response: Optional[str] = None
     rag_context: List[str] = Field(default_factory=list)
